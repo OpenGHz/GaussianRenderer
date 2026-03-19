@@ -22,9 +22,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from dataclasses import dataclass
+
 import torch
 from torch import Tensor
-from dataclasses import dataclass
+
 
 @dataclass
 class GaussianData:
@@ -33,11 +35,11 @@ class GaussianData:
         self.rot = rot  # (N, 4)
         self.scale = scale  # (N, 3)
         self.opacity = opacity  # (N)
-        self.sh = sh    # (N, K, 3)
+        self.sh = sh  # (N, K, 3)
 
     def __len__(self):
         return len(self.xyz)
-    
+
     @property
     def device(self):
         return self.xyz.device
@@ -51,17 +53,18 @@ class GaussianData:
             self.sh = torch.tensor(self.sh).float().cuda().requires_grad_(False)
         return self
 
+
 @dataclass
 class GaussianBatchData:
-    xyz: Tensor      # (B, N, 3)
-    rot: Tensor      # (B, N, 4)
-    scale: Tensor    # (B, N, 3)
+    xyz: Tensor  # (B, N, 3)
+    rot: Tensor  # (B, N, 4)
+    scale: Tensor  # (B, N, 3)
     opacity: Tensor  # (B, N)
-    sh: Tensor       # (B, N, K, 3)
+    sh: Tensor  # (B, N, K, 3)
 
     def __len__(self):
         return self.xyz.shape[1]
-    
+
     @property
     def batch_size(self):
         return self.xyz.shape[0]

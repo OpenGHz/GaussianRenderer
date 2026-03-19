@@ -22,14 +22,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from typing import Tuple, List, Union, Dict, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from gsplat.rendering import rasterization
 from torch import Tensor
 
-from gsplat.rendering import rasterization
-from .gaussiandata import GaussianData, GaussianBatchData
+from .gaussiandata import GaussianBatchData, GaussianData
+
 
 @torch.compile
 def quaternion_multiply(q1: Tensor, q2: Tensor) -> Tensor:
@@ -41,132 +42,134 @@ def quaternion_multiply(q1: Tensor, q2: Tensor) -> Tensor:
     z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
     return torch.stack((w, x, y, z), dim=-1)
 
+
 @torch.compile
 def transform_points(points: Tensor, pos: Tensor, quat: Tensor) -> Tensor:
     # points: (N, 3)
     # pos: (N, 3)
     # quat: (N, 4) wxyz
-    
+
     # Rotate points
     # v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
     q_w = quat[..., 0]
     q_xyz = quat[..., 1:]
-    
+
     t = 2.0 * torch.cross(q_xyz, points, dim=-1)
     points_rotated = points + q_w.unsqueeze(-1) * t + torch.cross(q_xyz, t, dim=-1)
-    
+
     return points_rotated + pos
 
 
 @torch.no_grad()
 def batch_render(
     gaussians: GaussianData,
-    cam_pos: np.ndarray, # (Ncam, 3)
-    cam_xmat: np.ndarray, # (Ncam, 9)
+    cam_pos: np.ndarray,  # (Ncam, 3)
+    cam_xmat: np.ndarray,  # (Ncam, 9)
     height: int,
     width: int,
-    fovy: np.ndarray, # (Ncam,) degree
-    bg_imgs: Optional[Tensor] = None, # (Ncam, H, W, 3)
+    fovy: np.ndarray,  # (Ncam,) degree
+    bg_imgs: Optional[Tensor] = None,  # (Ncam, H, W, 3)
     y_up: bool = True,
 ) -> Tuple[Tensor, Tensor]:
-    
+
     device = gaussians.device
-    
-    # 1. Prepare Gaussians    
+
+    # 1. Prepare Gaussians
     if gaussians.sh.dim() == 2:
         gaussians.sh = gaussians.sh.reshape(gaussians.sh.shape[0], -1, 3).contiguous()
-    
+
     sh_degree = int(np.round(np.sqrt(gaussians.sh.shape[1]))) - 1
 
     # 2. Prepare Cameras
     Ncam = cam_pos.shape[0]
-    
+
     # Convert camera data to torch
-    cam_pos_t = torch.tensor(cam_pos, dtype=torch.float32, device=device) # (N, 3)
-    cam_xmat_t = torch.tensor(cam_xmat, dtype=torch.float32, device=device).reshape(Ncam, 3, 3) # (N, 3, 3)
-    fovy_t = torch.tensor(np.radians(fovy), dtype=torch.float32, device=device) # (N,)
-    
+    cam_pos_t = torch.tensor(cam_pos, dtype=torch.float32, device=device)  # (N, 3)
+    cam_xmat_t = torch.tensor(cam_xmat, dtype=torch.float32, device=device).reshape(Ncam, 3, 3)  # (N, 3, 3)
+    fovy_t = torch.tensor(np.radians(fovy), dtype=torch.float32, device=device)  # (N,)
+
     # Compute Intrinsics (K)
     # tan(fovy/2) = H / (2*fy) => fy = H / (2 * tan(fovy/2))
     # Assume square pixels: fx = fy
     # cx = W/2, cy = H/2
-    
+
     tan_half_fovy = torch.tan(fovy_t / 2.0)
     focal_y = height / (2.0 * tan_half_fovy)
-    focal_x = focal_y # Square pixels assumption
-    
+    focal_x = focal_y  # Square pixels assumption
+
     cx = width / 2.0
     cy = height / 2.0
-    
+
     Ks = torch.zeros((Ncam, 3, 3), dtype=torch.float32, device=device)
     Ks[:, 0, 0] = focal_x
     Ks[:, 1, 1] = focal_y
     Ks[:, 0, 2] = cx
     Ks[:, 1, 2] = cy
     Ks[:, 2, 2] = 1.0
-    
+
     # Compute Extrinsics (View Matrix)
     # Tmat construction similar to renderer_cuda.py
     # Tmat = [R | t]
     #        [0 | 1]
-    
+
     Tmats = torch.eye(4, dtype=torch.float32, device=device).unsqueeze(0).repeat(Ncam, 1, 1)
     Tmats[:, :3, :3] = cam_xmat_t
     Tmats[:, :3, 3] = cam_pos_t
-    
+
     # Flip Y and Z columns of rotation (MuJoCo to OpenGL convention)
     if y_up:
         Tmats[:, 0:3, 1] *= -1
         Tmats[:, 0:3, 2] *= -1
-    
+
     # View Matrix = Inverse of World Matrix
     viewmats = torch.inverse(Tmats)
-    
+
     # 3. Rasterization
     renders, alphas, meta = rasterization(
-        means=gaussians.xyz,         # [G, 3]
-        quats=gaussians.rot,         # [G, 4]
-        scales=gaussians.scale,      # [G, 3]
-        opacities=gaussians.opacity, # [G]
-        colors=gaussians.sh,         # [G, K, 3]
-        viewmats=viewmats,           # [Ncam, 4, 4]
-        Ks=Ks,                       # [Ncam, 3, 3]
+        means=gaussians.xyz,  # [G, 3]
+        quats=gaussians.rot,  # [G, 4]
+        scales=gaussians.scale,  # [G, 3]
+        opacities=gaussians.opacity,  # [G]
+        colors=gaussians.sh,  # [G, K, 3]
+        viewmats=viewmats,  # [Ncam, 4, 4]
+        Ks=Ks,  # [Ncam, 3, 3]
         width=width,
         height=height,
         sh_degree=sh_degree,
         render_mode="RGB+D",
         packed=False,
     )
-    
+
     # renders: (Ncam, H, W, 4) -> RGBD
-    
+
     color_img = renders[..., :3]
     depth_img = renders[..., 3:4]
 
     if bg_imgs is not None:
         if bg_imgs.shape != (Ncam, height, width, 3):
             raise ValueError(f"bg_imgs shape mismatch. Expected {(Ncam, height, width, 3)}, got {bg_imgs.shape}")
-        
+
         if bg_imgs.device != device:
             bg_imgs = bg_imgs.to(device)
-            
+
         color_img.addcmul_(bg_imgs, 1.0 - alphas)
-    
+
     return color_img, depth_img
+
 
 @torch.no_grad()
 def batch_env_render(
     gaussians: GaussianBatchData,
-    cam_pos: Tensor, # (Nenv, Ncam, 3)
-    cam_xmat: Tensor, # (Nenv, Ncam, 9)
+    cam_pos: Tensor,  # (Nenv, Ncam, 3)
+    cam_xmat: Tensor,  # (Nenv, Ncam, 9)
     height: int,
     width: int,
-    fovy: np.ndarray, # (Nenv, Ncam) degree
-    bg_imgs: Optional[Tensor] = None, # (Nenv, Ncam, H, W, 3)
+    fovy: np.ndarray,  # (Nenv, Ncam) degree
+    bg_imgs: Optional[Tensor] = None,  # (Nenv, Ncam, H, W, 3)
     minibatch: Optional[int] = None,
     y_up: bool = True,
 ) -> Tuple[Tensor, Tensor]:
-    
+
     device = gaussians.device
     Nenv = cam_pos.shape[0]
     Ncam = cam_pos.shape[1]
@@ -174,117 +177,118 @@ def batch_env_render(
     if minibatch is not None and minibatch > 0 and minibatch < Nenv:
         out_color = torch.empty((Nenv, Ncam, height, width, 3), dtype=torch.float32, device=device)
         out_depth = torch.empty((Nenv, Ncam, height, width, 1), dtype=torch.float32, device=device)
-        
+
         for i in range(0, Nenv, minibatch):
             end = min(i + minibatch, Nenv)
-            
+
             g_slice = GaussianBatchData(
                 xyz=gaussians.xyz[i:end],
                 rot=gaussians.rot[i:end],
                 scale=gaussians.scale[i:end],
                 opacity=gaussians.opacity[i:end],
-                sh=gaussians.sh[i:end]
+                sh=gaussians.sh[i:end],
             )
-            
+
             bg_slice = bg_imgs[i:end] if bg_imgs is not None else None
-            
+
             c, d = batch_env_render(
-                g_slice, 
-                cam_pos[i:end], 
-                cam_xmat[i:end], 
-                height, 
-                width, 
-                fovy[i:end] if len(fovy) == Nenv else fovy, 
-                bg_imgs=bg_slice, 
-                minibatch=None
+                g_slice,
+                cam_pos[i:end],
+                cam_xmat[i:end],
+                height,
+                width,
+                fovy[i:end] if len(fovy) == Nenv else fovy,
+                bg_imgs=bg_slice,
+                minibatch=None,
             )
             out_color[i:end] = c
             out_depth[i:end] = d
         return out_color, out_depth
-    
+
     # 1. Prepare Gaussians
     # gaussians.xyz is (Nenv, N, 3)
-    
-    if gaussians.sh.dim() == 3: # (Nenv, N, D)
+
+    if gaussians.sh.dim() == 3:  # (Nenv, N, D)
         gaussians.sh = gaussians.sh.reshape(gaussians.sh.shape[0], gaussians.sh.shape[1], -1, 3).contiguous()
-    
+
     sh_degree = int(np.round(np.sqrt(gaussians.sh.shape[2]))) - 1
 
     # 2. Prepare Cameras
     Nenv = cam_pos.shape[0]
     Ncam = cam_pos.shape[1]
-    
+
     # Convert camera data to torch
-    fovy_t = torch.tensor(np.radians(fovy), dtype=torch.float32, device=device) # (Nenv, Ncam)
-    
+    fovy_t = torch.tensor(np.radians(fovy), dtype=torch.float32, device=device)  # (Nenv, Ncam)
+
     # Compute Intrinsics (K)
     tan_half_fovy = torch.tan(fovy_t / 2.0)
     focal_y = height / (2.0 * tan_half_fovy)
-    focal_x = focal_y # Square pixels assumption
-    
+    focal_x = focal_y  # Square pixels assumption
+
     cx = width / 2.0
     cy = height / 2.0
-    
+
     Ks = torch.zeros((Nenv, Ncam, 3, 3), dtype=torch.float32, device=device)
     Ks[..., 0, 0] = focal_x
     Ks[..., 1, 1] = focal_y
     Ks[..., 0, 2] = cx
     Ks[..., 1, 2] = cy
     Ks[..., 2, 2] = 1.0
-    
+
     # Compute Extrinsics (View Matrix)
     Tmats = torch.eye(4, dtype=torch.float32, device=device).unsqueeze(0).unsqueeze(0).repeat(Nenv, Ncam, 1, 1)
     Tmats[..., :3, :3] = cam_xmat.reshape(Nenv, Ncam, 3, 3)
     Tmats[..., :3, 3] = cam_pos
-    
+
     # Flip Y and Z columns of rotation (MuJoCo to OpenGL convention)
     if y_up:
         Tmats[..., 0:3, 1] *= -1
         Tmats[..., 0:3, 2] *= -1
-    
+
     # View Matrix = Inverse of World Matrix
     viewmats = torch.inverse(Tmats)
-    
+
     # 3. Rasterization
     renders, alphas, meta = rasterization(
-        means=gaussians.xyz,         # [Nenv, G, 3]
-        quats=gaussians.rot,         # [Nenv, G, 4]
-        scales=gaussians.scale,      # [Nenv, G, 3]
-        opacities=gaussians.opacity, # [Nenv, G]
-        colors=gaussians.sh,         # [Nenv, G, K, 3]
-        viewmats=viewmats,           # [Nenv, Ncam, 4, 4]
-        Ks=Ks,                       # [Nenv, Ncam, 3, 3]
+        means=gaussians.xyz,  # [Nenv, G, 3]
+        quats=gaussians.rot,  # [Nenv, G, 4]
+        scales=gaussians.scale,  # [Nenv, G, 3]
+        opacities=gaussians.opacity,  # [Nenv, G]
+        colors=gaussians.sh,  # [Nenv, G, K, 3]
+        viewmats=viewmats,  # [Nenv, Ncam, 4, 4]
+        Ks=Ks,  # [Nenv, Ncam, 3, 3]
         width=width,
         height=height,
         sh_degree=sh_degree,
         render_mode="RGB+D",
         packed=False,
     )
-    
+
     # renders: (Nenv, Ncam, H, W, 4) -> RGBD
-    
+
     color_img = renders[..., :3]
     depth_img = renders[..., 3:4]
 
     if bg_imgs is not None:
         if bg_imgs.shape != (Nenv, Ncam, height, width, 3):
             raise ValueError(f"bg_imgs shape mismatch. Expected {(Nenv, Ncam, height, width, 3)}, got {bg_imgs.shape}")
-        
+
         if bg_imgs.device != device:
             bg_imgs = bg_imgs.to(device)
-            
+
         color_img.addcmul_(bg_imgs, 1.0 - alphas)
-    
+
     return color_img, depth_img
+
 
 @torch.no_grad()
 def batch_update_gaussians(
     gaussian_template: GaussianData,
-    body_pos: Tensor, # (Nenv, Nbody, 3)
-    body_quat: Tensor, # (Nenv, Nbody, 4)
-    point_to_body_idx: Optional[Tensor], # (N_points,)
-    dynamic_mask: Optional[Tensor], # (N_points,)
-    scalar_first: bool=True
+    body_pos: Tensor,  # (Nenv, Nbody, 3)
+    body_quat: Tensor,  # (Nenv, Nbody, 4)
+    point_to_body_idx: Optional[Tensor],  # (N_points,)
+    dynamic_mask: Optional[Tensor],  # (N_points,)
+    scalar_first: bool = True,
 ) -> GaussianBatchData:
     """
     Batch update gaussian positions and rotations based on body poses.
@@ -311,20 +315,20 @@ def batch_update_gaussians(
     # Prepare output
     xyz_out = tmpl_xyz.unsqueeze(0).expand(Nenv, Ngs, 3).clone()
     rot_out = tmpl_rot.unsqueeze(0).expand(Nenv, Ngs, 4).clone()
-    
+
     mask = dynamic_mask
     if mask.any():
         # (N_dynamic,)
         body_indices = point_to_body_idx[mask]
-        
+
         # Gather body poses: (Nenv, N_dynamic, 3/4)
         # body_pos is (Nenv, Nbody, 3)
         # We want to select body_indices for each env.
-        # body_pos[:, body_indices] works? 
+        # body_pos[:, body_indices] works?
         # Yes, standard indexing: (Nenv, N_dynamic, 3)
         pos_expanded = body_pos[:, body_indices]
         quat_expanded = body_quat[:, body_indices]
-        
+
         # Template properties: (N_dynamic, 3/4) -> (1, N_dynamic, 3/4)
         xyz_ori = tmpl_xyz[mask].unsqueeze(0)
         rot_ori = tmpl_rot[mask].unsqueeze(0)
@@ -336,7 +340,7 @@ def batch_update_gaussians(
         # transform_points broadcasts: (1, N_dyn, 3) + (Nenv, N_dyn, 3) -> (Nenv, N_dyn, 3)
         xyz_new = transform_points(xyz_ori, pos_expanded, quat_expanded)
         rot_new = quaternion_multiply(quat_expanded, rot_ori)
-        
+
         # Scatter back
         # xyz_out is (Nenv, N_total, 3)
         # We need to assign to xyz_out[:, mask, :]
@@ -348,11 +352,5 @@ def batch_update_gaussians(
     scale_out = tmpl_scale.unsqueeze(0).expand(Nenv, Ngs, 3)
     opacity_out = tmpl_opacity.unsqueeze(0).expand(Nenv, Ngs)
     sh_out = tmpl_sh.unsqueeze(0).expand(Nenv, Ngs, -1, 3)
-    
-    return GaussianBatchData(
-        xyz=xyz_out,
-        rot=rot_out,
-        scale=scale_out,
-        opacity=opacity_out,
-        sh=sh_out
-    )
+
+    return GaussianBatchData(xyz=xyz_out, rot=rot_out, scale=scale_out, opacity=opacity_out, sh=sh_out)

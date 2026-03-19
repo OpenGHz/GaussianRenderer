@@ -35,18 +35,20 @@ Where body_pos/body_quat/cam_pos/cam_xmat can come from mjx (MuJoCo JAX) state v
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 from torch import Tensor
 
-from .src.gaussiandata import GaussianData, GaussianBatchData
-from .src.util_gau import load_ply
 from .src.batch_rasterization import (
     batch_env_render as _batch_env_render,
+)
+from .src.batch_rasterization import (
     batch_update_gaussians as _batch_update_gaussians,
 )
+from .src.gaussiandata import GaussianBatchData, GaussianData
+from .src.util_gau import load_ply
 
 
 @dataclass
@@ -137,7 +139,7 @@ class BatchSplatRenderer:
         num_points = len(self.template)
         self.dynamic_mask = torch.zeros(num_points, dtype=torch.bool, device=device)
         self.point_to_body_idx = torch.zeros(num_points, dtype=torch.long, device=device)
-        
+
         for i in range(len(self.gs_idx_start)):
             start = self.gs_idx_start[i]
             end = self.gs_idx_end[i]
@@ -169,7 +171,7 @@ class BatchSplatRenderer:
             body_quat,
             point_to_body_idx=self.point_to_body_idx,
             dynamic_mask=self.dynamic_mask,
-            scalar_first=scalar_first
+            scalar_first=scalar_first,
         )
 
     def batch_env_render(
@@ -193,11 +195,13 @@ class BatchSplatRenderer:
             cam_xmat = cam_xmat.to(self.device)
         return _batch_env_render(gsb, cam_pos, cam_xmat, height, width, fovy, bg_imgs=bg_imgs, minibatch=self.minibatch)
 
+
 if TYPE_CHECKING:
     import mujoco
 
+
 class MjxBatchSplatRenderer(BatchSplatRenderer):
-    def __init__(self, cfg: BatchSplatConfig, mj_model:"mujoco.MjModel") -> None:
+    def __init__(self, cfg: BatchSplatConfig, mj_model: "mujoco.MjModel") -> None:
         body_name_to_id = {}
         for i in range(mj_model.nbody):
             body_name = mj_model.body(i).name
@@ -205,18 +209,21 @@ class MjxBatchSplatRenderer(BatchSplatRenderer):
                 body_name_to_id[body_name] = i
         super().__init__(cfg, body_name_to_id)
 
+
 if TYPE_CHECKING:
     import motrixsim
 
+
 class MtxBatchSplatRenderer(BatchSplatRenderer):
-    def __init__(self, cfg, mx_model:"motrixsim.MotrixSimModel") -> None:
+    def __init__(self, cfg, mx_model: "motrixsim.MotrixSimModel") -> None:
         body_name_to_id = {}
         for i, link_name in enumerate(mx_model.link_names):
             if link_name:
                 body_name_to_id[link_name] = i
         super().__init__(cfg, body_name_to_id)
-    
+
     def batch_update_gaussians(self, body_pos: Tensor, body_quat: Tensor) -> GaussianBatchData:
         return super().batch_update_gaussians(body_pos, body_quat, scalar_first=False)
+
 
 __all__ = ["BatchSplatConfig", "BatchSplatRenderer", "MjxBatchSplatRenderer", "MtxBatchSplatRenderer"]

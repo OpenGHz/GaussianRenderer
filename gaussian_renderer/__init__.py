@@ -22,15 +22,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .src.gaussiandata import GaussianData, GaussianBatchData
-from .src.util_gau import load_ply, save_ply, transform_shs
-from .src.super_splat_loader import is_super_splat_format, load_super_splat_ply, save_super_splat_ply
-from .src.batch_rasterization import batch_render, batch_env_render, batch_update_gaussians
-from .src.gs_renderer import GSRenderer
-
-from .gs_renderer_mujoco import GSRendererMuJoCo
-from .gs_renderer_motrixsim import GSRendererMotrixSim
 from .batch_splat import BatchSplatConfig, BatchSplatRenderer, MjxBatchSplatRenderer, MtxBatchSplatRenderer
+from .gs_renderer_motrixsim import GSRendererMotrixSim
+from .gs_renderer_mujoco import GSRendererMuJoCo
+from .src.batch_rasterization import batch_env_render, batch_render, batch_update_gaussians
+from .src.gaussiandata import GaussianBatchData, GaussianData
+from .src.gs_renderer import GSRenderer
+from .src.super_splat_loader import is_super_splat_format, load_super_splat_ply, save_super_splat_ply
+from .src.util_gau import load_ply, save_ply, transform_shs
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 __author__ = "Yufei Jia"

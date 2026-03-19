@@ -21,7 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-from typing import Tuple, List, Union, Dict, Optional, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -39,8 +39,9 @@ if TYPE_CHECKING:
     import motrixsim
 from .src.gs_renderer import GSRenderer
 
+
 class GSRendererMotrixSim(GSRenderer):
-    def __init__(self, models_dict: Dict[str, str], mx_model:"motrixsim.MotrixSimModel") -> None:
+    def __init__(self, models_dict: Dict[str, str], mx_model: "motrixsim.MotrixSimModel") -> None:
         if motrixsim is None:
             raise ImportError(
                 "MotrixSim is not installed. Install the motrixsim package to use GSRendererMotrixSim."
@@ -48,13 +49,13 @@ class GSRendererMotrixSim(GSRenderer):
         super().__init__(models_dict)
         self.init_renderer(mx_model)
 
-    def init_renderer(self, mx_model:"motrixsim.MotrixSimModel") -> None:
+    def init_renderer(self, mx_model: "motrixsim.MotrixSimModel") -> None:
         self._mx_model = mx_model
 
         self.gs_idx_start = []
         self.gs_idx_end = []
         self.gs_body_ids = []
-        
+
         objects_info = []
 
         for i, link_name in enumerate(mx_model.link_names):
@@ -69,14 +70,14 @@ class GSRendererMotrixSim(GSRenderer):
         self.gs_idx_start = np.array(self.gs_idx_start)
         self.gs_idx_end = np.array(self.gs_idx_end)
         self.gs_body_ids = np.array(self.gs_body_ids)
-        
+
         # Call the generic mapping method in base class
         self.set_objects_mapping(objects_info)
 
     def update_gaussians(self, mx_data: "motrixsim.SceneData") -> None:
-        if not hasattr(self, 'gs_idx_start') or len(self.gs_idx_start) == 0:
+        if not hasattr(self, "gs_idx_start") or len(self.gs_idx_start) == 0:
             return
-        
+
         if not hasattr(self, "_mx_model") or self._mx_model is None:
             raise RuntimeError("MotrixSim model is not initialized in the renderer, call init_renderer first.")
 
@@ -84,23 +85,22 @@ class GSRendererMotrixSim(GSRenderer):
 
         # Batch extract position (N, 3)
         pos_values = link_poses[self.gs_body_ids, :3]
-        
+
         # Batch extract quaternion (N, 4) - wxyz
         quat_values = link_poses[self.gs_body_ids, 3:7]
-        
-        # Call batch update interface
-        self.update_gaussian_properties(
-            pos_values,
-            quat_values,
-            scalar_first=False
-        )
 
-    def render(self, 
-               mx_model: "motrixsim.MotrixSimModel",
-               mx_data: "motrixsim.SceneData",
-               cam_ids:Union[List[int], np.ndarray], 
-               width:int, height:int,
-               system_camera: Optional[Any] = None) -> Dict[int, Tuple[Tensor, Tensor]]:
+        # Call batch update interface
+        self.update_gaussian_properties(pos_values, quat_values, scalar_first=False)
+
+    def render(
+        self,
+        mx_model: "motrixsim.MotrixSimModel",
+        mx_data: "motrixsim.SceneData",
+        cam_ids: Union[List[int], np.ndarray],
+        width: int,
+        height: int,
+        system_camera: Optional[Any] = None,
+    ) -> Dict[int, Tuple[Tensor, Tensor]]:
 
         cam_pos_lst = []
         cam_xmat_lst = []
@@ -119,20 +119,16 @@ class GSRendererMotrixSim(GSRenderer):
                 cam_pose = cam.get_pose(mx_data)
                 cam_pos_lst.append(cam_pose[:3])
                 cam_xmat_lst.append(Rotation.from_quat(cam_pose[3:7]).as_matrix().flatten())
-                fovy_lst.append(mx_model.cameras[cid].fovy) # TODO: get actual fovy from MotrixSim camera
+                fovy_lst.append(mx_model.cameras[cid].fovy)  # TODO: get actual fovy from MotrixSim camera
 
         rgb_tensor, depth_tensor = self.render_batch(
-            np.array(cam_pos_lst),
-            np.array(cam_xmat_lst),
-            height,
-            width,
-            np.array(fovy_lst)
+            np.array(cam_pos_lst), np.array(cam_xmat_lst), height, width, np.array(fovy_lst)
         )
-        
+
         batch_indices = {cid: i for i, cid in enumerate(cam_ids)}
-        
+
         results = {}
         for cid, idx in batch_indices.items():
             results[cid] = (rgb_tensor[idx], depth_tensor[idx])
-        
+
         return results

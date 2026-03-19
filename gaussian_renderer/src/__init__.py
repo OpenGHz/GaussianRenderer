@@ -22,7 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .gaussiandata import GaussianData, GaussianBatchData
-from .util_gau import load_ply, save_ply, transform_shs
-from .batch_rasterization import batch_render, batch_env_render, batch_update_gaussians
+from .batch_rasterization import batch_env_render, batch_render, batch_update_gaussians
+from .gaussiandata import GaussianBatchData, GaussianData
 from .gs_renderer import GSRenderer
+from .util_gau import load_ply, save_ply, transform_shs

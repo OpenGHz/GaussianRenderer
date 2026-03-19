@@ -21,7 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-from typing import Tuple, List, Union, Dict, Optional, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import mujoco
 from .src.gs_renderer import GSRenderer
 
+
 class GSRendererMuJoCo(GSRenderer):
     def __init__(self, models_dict: Dict[str, str], mj_model: "mujoco.MjModel"):
         if mujoco is None:
@@ -52,7 +53,7 @@ class GSRendererMuJoCo(GSRenderer):
         self.gs_idx_start = []
         self.gs_idx_end = []
         self.gs_body_ids = []
-        
+
         objects_info = []
         for i in range(mj_model.nbody):
             body_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_BODY, i)
@@ -67,41 +68,43 @@ class GSRendererMuJoCo(GSRenderer):
         self.gs_idx_start = np.array(self.gs_idx_start)
         self.gs_idx_end = np.array(self.gs_idx_end)
         self.gs_body_ids = np.array(self.gs_body_ids)
-        
+
         # Call the generic mapping method in base class
         self.set_objects_mapping(objects_info)
 
-    def update_gaussians(self, mj_data:"mujoco.MjData") -> None:
-        if not hasattr(self, 'gs_idx_start') or len(self.gs_idx_start) == 0:
+    def update_gaussians(self, mj_data: "mujoco.MjData") -> None:
+        if not hasattr(self, "gs_idx_start") or len(self.gs_idx_start) == 0:
             return
 
-        if not hasattr(self, 'gs_body_ids'):
-            raise RuntimeError("MuJoCo body IDs are not initialized in the renderer, call GSRendererMuJoCo.init_renderer first.")
+        if not hasattr(self, "gs_body_ids"):
+            raise RuntimeError(
+                "MuJoCo body IDs are not initialized in the renderer, call GSRendererMuJoCo.init_renderer first."
+            )
 
         # Batch extract position (N, 3)
         pos_values = mj_data.xpos[self.gs_body_ids]
-        
+
         # Batch extract quaternion (N, 4) - wxyz
         quat_values = mj_data.xquat[self.gs_body_ids]
-        
-        # Call batch update interface
-        self.update_gaussian_properties(
-            pos_values,
-            quat_values
-        )
 
-    def render(self, 
-               mj_model:"mujoco.MjModel", 
-               mj_data:"mujoco.MjData", 
-               cam_ids:Union[List[int], np.ndarray], 
-               width:int, height:int, 
-               free_camera:Optional[Any]=None) -> Dict[int, Tuple[Tensor, Tensor]]:
+        # Call batch update interface
+        self.update_gaussian_properties(pos_values, quat_values)
+
+    def render(
+        self,
+        mj_model: "mujoco.MjModel",
+        mj_data: "mujoco.MjData",
+        cam_ids: Union[List[int], np.ndarray],
+        width: int,
+        height: int,
+        free_camera: Optional[Any] = None,
+    ) -> Dict[int, Tuple[Tensor, Tensor]]:
         if len(cam_ids) == 0:
             return {}, {}, {}
 
         # 1. Get fixed camera poses
         fixed_cam_ids = [cid for cid in cam_ids if cid != -1]
-        
+
         if len(fixed_cam_ids) > 0:
             fixed_cam_indices = np.array(fixed_cam_ids)
             cam_pos_fixed = mj_data.cam_xpos[fixed_cam_indices]
@@ -116,24 +119,31 @@ class GSRendererMuJoCo(GSRenderer):
         if -1 in cam_ids:
             if free_camera is None:
                 raise ValueError("free_camera must be provided if cam_id -1 is requested")
-            
+
             # Calculate free camera pose
-            camera_rmat = np.array([
-                [ 0,  0, -1],
-                [-1,  0,  0],
-                [ 0,  1,  0],
-            ])
-            rotation_matrix = camera_rmat @ Rotation.from_euler('xyz', [free_camera.elevation * np.pi / 180.0, free_camera.azimuth * np.pi / 180.0, 0.0]).as_matrix()
-            camera_position = free_camera.lookat + free_camera.distance * rotation_matrix[:3,2]
-            
+            camera_rmat = np.array(
+                [
+                    [0, 0, -1],
+                    [-1, 0, 0],
+                    [0, 1, 0],
+                ]
+            )
+            rotation_matrix = (
+                camera_rmat
+                @ Rotation.from_euler(
+                    "xyz", [free_camera.elevation * np.pi / 180.0, free_camera.azimuth * np.pi / 180.0, 0.0]
+                ).as_matrix()
+            )
+            camera_position = free_camera.lookat + free_camera.distance * rotation_matrix[:3, 2]
+
             trans = camera_position
-            rmat = rotation_matrix.flatten() # (9,)
+            rmat = rotation_matrix.flatten()  # (9,)
             fovy = mj_model.vis.global_.fovy
-            
+
             cam_pos = np.vstack([cam_pos_fixed, trans])
             cam_xmat = np.vstack([cam_xmat_fixed, rmat])
             fovy_arr = np.concatenate([fovy_fixed, [fovy]])
-            
+
             batch_indices = {cid: i for i, cid in enumerate(fixed_cam_ids)}
             batch_indices[-1] = len(fixed_cam_ids)
         else:
@@ -143,16 +153,10 @@ class GSRendererMuJoCo(GSRenderer):
             batch_indices = {cid: i for i, cid in enumerate(fixed_cam_ids)}
 
         # Call the generic render_batch method in base class
-        rgb_tensor, depth_tensor = self.render_batch(
-            cam_pos,
-            cam_xmat,
-            height,
-            width,
-            fovy_arr
-        )
-        
+        rgb_tensor, depth_tensor = self.render_batch(cam_pos, cam_xmat, height, width, fovy_arr)
+
         results = {}
         for cid, idx in batch_indices.items():
             results[cid] = (rgb_tensor[idx], depth_tensor[idx])
-        
+
         return results
