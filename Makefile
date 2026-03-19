@@ -10,7 +10,7 @@ format:
 	uv run ruff format .
 
 typecheck:
-	uv run mypy gaussian_renderer
+	uv run mypy src/gaussian_renderer
 
 test:
 	uv run pytest
