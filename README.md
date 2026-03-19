@@ -15,25 +15,28 @@ Python >= 3.10
 ## Installation
 
 ```bash
-pip install gaussian-renderer
+uv add gaussian-renderer
+# or: pip install gaussian-renderer
 ```
 
 From source:
 ```bash
 git clone https://github.com/TATP-233/GaussainRenderer.git
 cd GaussainRenderer
-pip install .
+uv pip install .
+# or: pip install .
 ```
 
 ### Optional extras
 
 ```bash
-pip install ".[viewer]"   # OpenGL viewer (glfw, PyOpenGL)
-pip install ".[mujoco]"   # MuJoCo integration
-pip install ".[motrix]"   # MotrixSim integration
+uv add "gaussian-renderer[viewer]"   # OpenGL viewer (glfw, PyOpenGL)
+uv add "gaussian-renderer[mujoco]"   # MuJoCo integration
+uv add "gaussian-renderer[motrix]"   # MotrixSim integration
 
 # Combine as needed
-pip install ".[viewer,mujoco]"
+uv add "gaussian-renderer[viewer,mujoco]"
+# or: pip install ".[viewer,mujoco]"
 ```
 
 ## Usage
@@ -71,7 +74,8 @@ uv run python -m gaussian_renderer.transform_gs_model input.ply
 ## Development
 
 ```bash
-pip install ".[dev]"
+uv pip install ".[dev]"
+# or: pip install ".[dev]"
 make lint       # ruff check
 make format     # ruff format
 make typecheck  # mypy
